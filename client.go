@@ -12,6 +12,11 @@ import (
 
 // ClientConfig holds the WireGuard client configuration.
 type ClientConfig struct {
+	// Backend selects the WireGuard implementation. See ServerConfig.Backend.
+	Backend Backend
+	// InterfaceName, when Backend=BackendKernel, names the wg* netdev
+	// the bring-up creates. Empty → auto-generated. Ignored for userspace.
+	InterfaceName string
 	// PrivateKey is a base64-encoded Curve25519 private key supplied inline.
 	// When set it takes precedence over PrivateKeyPath — handy for callers
 	// that already hold the key (e.g. coordinates handed out by a control
@@ -32,11 +37,14 @@ type ClientConfig struct {
 }
 
 // DialOption returns a grpc.DialOption that tunnels every gRPC connection
-// through a fresh userspace WireGuard device to the overlay address addr
+// through a fresh WireGuard device to the overlay address addr
 // ("ip:port" on the overlay).
 //
-// One device is created per DialOption invocation; reuse the returned option
-// for multiple grpc.Dial calls rather than calling DialOption repeatedly.
+// One device is created per DialOption invocation; reuse the returned
+// option for multiple grpc.Dial calls rather than calling DialOption
+// repeatedly. For BackendKernel, the wg* interface stays up until process
+// exit (callers that need explicit teardown should switch to a higher-
+// level wrapper that exposes a Close hook).
 func DialOption(addr string, cfg ClientConfig) (grpc.DialOption, error) {
 	if cfg.Peer.Endpoint == "" {
 		return nil, fmt.Errorf("ClientConfig.Peer.Endpoint must be set")
@@ -47,18 +55,12 @@ func DialOption(addr string, cfg ClientConfig) (grpc.DialOption, error) {
 		return nil, fmt.Errorf("private key: %w", err)
 	}
 
-	dev, tnet, err := bringUpDevice(priv, cfg.LocalIP, 0, []Peer{cfg.Peer}, cfg.MTU, cfg.Logger)
+	wgnet, err := bringUpDevice(cfg.Backend, cfg.InterfaceName, priv, cfg.LocalIP, 0, []Peer{cfg.Peer}, cfg.MTU, cfg.Logger)
 	if err != nil {
-		return nil, err
-	}
-
-	tcpAddr, err := parseOverlayAddr(addr)
-	if err != nil {
-		dev.Close()
 		return nil, err
 	}
 
 	return grpc.WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) {
-		return tnet.DialContextTCP(ctx, tcpAddr)
+		return wgnet.DialContext(ctx, addr)
 	}), nil
 }

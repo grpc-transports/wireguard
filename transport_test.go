@@ -291,8 +291,13 @@ func TestIntegration_Roundtrip(t *testing.T) {
 		acceptDone <- nil
 	}()
 
-	// Client side: bring up a second device and dial through netstack.
-	clientDev, clientNet, err := bringUpDevice(
+	// Client side: bring up a second device and dial through the backend's
+	// wgNet abstraction. The test exercises the userspace backend by default
+	// (BackendUserspace=0); the kernel backend is excluded here since
+	// hitting wg kernel module from a unit test needs CAP_NET_ADMIN.
+	clientNet, err := bringUpDevice(
+		BackendUserspace,
+		"",
 		clientPriv,
 		clientIP,
 		0,
@@ -308,12 +313,11 @@ func TestIntegration_Roundtrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("client device: %v", err)
 	}
-	defer clientDev.Close()
+	defer clientNet.Close()
 
-	target, _ := parseOverlayAddr(fmt.Sprintf("%s:9001", serverIP))
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	conn, err := clientNet.DialContextTCP(ctx, target)
+	conn, err := clientNet.DialContext(ctx, fmt.Sprintf("%s:9001", serverIP))
 	if err != nil {
 		t.Fatalf("dial: %v", err)
 	}
