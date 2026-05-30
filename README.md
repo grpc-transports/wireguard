@@ -42,13 +42,17 @@ lis, err := wgtransport.ListenWireGuard("10.0.0.1:50051", wgtransport.ServerConf
 })
 ```
 
-The bring-up runs five netlink + wgctrl steps:
+The bring-up runs five netlink + wgctrl steps. **No shell, no `iproute2`, no `wireguard-tools` required in the rootfs** — everything is pure Go via [`github.com/vishvananda/netlink`](https://github.com/vishvananda/netlink) (raw netlink syscalls for link/addr/route) and [`golang.zx2c4.com/wireguard/wgctrl`](https://pkg.go.dev/golang.zx2c4.com/wireguard/wgctrl) (Donenfeld's official Go library for the kernel WireGuard netlink contract).
 
-1. `ip link add wg-svc type wireguard`
-2. `wg set wg-svc private-key … listen-port … peer …` (via wgctrl, not the CLI)
-3. `ip addr add 10.0.0.1/32 dev wg-svc`
-4. `ip route add <peer-allowed-ip> dev wg-svc` for each peer
-5. `ip link set wg-svc up`
+The table below shows the equivalent shell command (operator mental model, what `wg-quick` would run) next to the actual Go call site:
+
+| | Equivalent shell | Actual Go call |
+|---|---|---|
+| 1 | `ip link add wg-svc type wireguard` | `netlink.LinkAdd(&GenericLink{LinkType: "wireguard"})` |
+| 2 | `wg set wg-svc private-key … listen-port … peer …` | `wgctrl.Client.ConfigureDevice(ifname, wgtypes.Config{…})` |
+| 3 | `ip addr add 10.0.0.1/32 dev wg-svc` | `netlink.AddrAdd(link, &Addr{IPNet: …})` |
+| 4 | `ip route add <peer-allowed-ip> dev wg-svc` | `netlink.RouteAdd(&Route{LinkIndex, Dst, Scope: SCOPE_LINK})` |
+| 5 | `ip link set wg-svc up` | `netlink.LinkSetUp(link)` |
 
 Caveats:
 
