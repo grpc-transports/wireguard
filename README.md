@@ -16,7 +16,7 @@ github.com/grpc-transports/wireguard
 - Micro-VM workloads provisioned by a central controller that can distribute keys
 - Workloads where SSH-style per-user keys are a poor fit (ephemeral compute, no human auth)
 
-For VM ↔ VM on the same host, prefer vsock. For workloads with a human-driven CLI client, prefer [`ssh`](../ssh).
+For VM ↔ VM on the same host, prefer vsock. For workloads with a human-driven CLI client, prefer [`ssh`](https://github.com/grpc-transports/ssh).
 
 ## API
 
@@ -106,4 +106,5 @@ conn, err := grpc.Dial("passthrough:///target", opt)
 
 ## Used by
 
-_(none yet — created as a sibling of `ssh` to cover the cross-host VM-to-VM scenario)_
+- [`openweft/weft-client`](https://github.com/openweft/weft-client) — cross-host VM-to-VM gRPC dial path (consumes this lib via go modules)
+- [`openweft/weft`](https://github.com/openweft/weft) — agent-side WireGuard listener for inter-DC mesh
