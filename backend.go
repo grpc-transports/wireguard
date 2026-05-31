@@ -58,3 +58,11 @@ type wgNet interface {
 	DialContext(ctx context.Context, addr string) (net.Conn, error)
 	Close() error
 }
+
+// Closer is the public handle BringUp / BringUpClient return: just a Close
+// hook that tears the WireGuard device down. Used by guests that only need
+// the data path (kernel wg* netdev plumbed for the rest of the OS to use),
+// without the gRPC listener/dialer this package layers on top.
+type Closer interface {
+	Close() error
+}

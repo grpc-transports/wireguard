@@ -36,6 +36,33 @@ type ClientConfig struct {
 	Logger *log.Logger
 }
 
+// BringUpClient mirrors BringUp for ClientConfig: brings the WireGuard
+// device up, peers it with the single server peer, and returns a Closer.
+// No gRPC dial option is added on top — callers that just need the wg
+// interface (data path only) use this.
+func BringUpClient(cfg ClientConfig) (Closer, error) {
+	_, c, err := bringUpFromClientConfig(cfg)
+	return c, err
+}
+
+// bringUpFromClientConfig is the shared internal — see bringUpFromServerConfig.
+func bringUpFromClientConfig(cfg ClientConfig) (wgNet, Closer, error) {
+	if cfg.Peer.Endpoint == "" {
+		return nil, nil, fmt.Errorf("ClientConfig.Peer.Endpoint must be set")
+	}
+
+	priv, err := resolvePrivateKey(cfg.PrivateKey, cfg.PrivateKeyPath)
+	if err != nil {
+		return nil, nil, fmt.Errorf("private key: %w", err)
+	}
+
+	wgnet, err := bringUpDevice(cfg.Backend, cfg.InterfaceName, priv, cfg.LocalIP, 0, []Peer{cfg.Peer}, cfg.MTU, cfg.Logger)
+	if err != nil {
+		return nil, nil, err
+	}
+	return wgnet, wgnet, nil
+}
+
 // DialOption returns a grpc.DialOption that tunnels every gRPC connection
 // through a fresh WireGuard device to the overlay address addr
 // ("ip:port" on the overlay).
@@ -46,16 +73,7 @@ type ClientConfig struct {
 // exit (callers that need explicit teardown should switch to a higher-
 // level wrapper that exposes a Close hook).
 func DialOption(addr string, cfg ClientConfig) (grpc.DialOption, error) {
-	if cfg.Peer.Endpoint == "" {
-		return nil, fmt.Errorf("ClientConfig.Peer.Endpoint must be set")
-	}
-
-	priv, err := resolvePrivateKey(cfg.PrivateKey, cfg.PrivateKeyPath)
-	if err != nil {
-		return nil, fmt.Errorf("private key: %w", err)
-	}
-
-	wgnet, err := bringUpDevice(cfg.Backend, cfg.InterfaceName, priv, cfg.LocalIP, 0, []Peer{cfg.Peer}, cfg.MTU, cfg.Logger)
+	wgnet, _, err := bringUpFromClientConfig(cfg)
 	if err != nil {
 		return nil, err
 	}
