@@ -1,0 +1,139 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  # Coverage floor for the userspace (gVisor netstack) tests on Linux.
+  # The kernel-WireGuard backend (bringUpKernel/addrAdd/routeAdd/…) needs a real
+  # netlink device + CAP_NET_ADMIN and skips cleanly under CI / qemu-user, so it
+  # is intentionally excluded from the covered set.
+  COVER_MIN: "47.0"
+
+jobs:
+  # ── Native ───────────────────────────────────────────────────────────────
+  native:
+    name: native ${{ matrix.arch }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+      - name: test (+cover)
+        env:
+          CGO_ENABLED: "0"
+        run: |
+          set -euo pipefail
+          go test -mod=mod -timeout 600s -covermode=atomic \
+            -coverprofile=cover.out ./...
+          go tool cover -func=cover.out | tail -1
+      - name: coverage gate
+        run: |
+          set -euo pipefail
+          pct=$(go tool cover -func=cover.out | awk '/^total:/ {gsub("%","",$3); print $3}')
+          echo "total coverage: ${pct}% (min ${COVER_MIN}%)"
+          awk -v p="$pct" -v m="$COVER_MIN" \
+            'BEGIN { exit (p+0 >= m+0) ? 0 : 1 }' \
+            || { echo "coverage ${pct}% below floor ${COVER_MIN}%"; exit 1; }
+
+  # ── Emulated (QEMU via binfmt) ───────────────────────────────────────────
+  # Cross-compile a per-package test binary on the amd64 host, then run it under
+  # qemu-user inside a docker container for the target arch. This exercises the
+  # actual instruction set (incl. s390x big-endian) rather than just compiling.
+  emulated:
+    name: emulated ${{ matrix.arch }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: riscv64
+            image: "debian:trixie"
+            qemu_cpu: "rv64,v=true,vlen=128"
+          - arch: loong64
+            image: "ghcr.io/loong64/debian:trixie"
+            qemu_cpu: "la464"
+          - arch: ppc64le
+            image: "debian:trixie"
+            qemu_cpu: "power9"
+          - arch: s390x
+            image: "debian:trixie"
+            qemu_cpu: "qemu"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+
+      - name: register binfmt handlers (qemu-user)
+        run: docker run --privileged --rm tonistiigi/binfmt --install all
+
+      - name: cross-compile per-package test binaries
+        env:
+          CGO_ENABLED: "0"
+          GOOS: linux
+          GOARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          mkdir -p _tests
+          # One test binary per package (this module is a single package today,
+          # but go list keeps it generic).
+          for pkg in $(go list ./...); do
+            name=$(echo "$pkg" | tr '/.' '__')
+            echo ">> building test binary for $pkg ($GOARCH)"
+            go test -mod=mod -c -covermode=atomic \
+              -o "_tests/${name}.test" "$pkg"
+          done
+          ls -l _tests
+
+      - name: run test binaries under qemu (${{ matrix.arch }})
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          fail=0
+          for bin in _tests/*.test; do
+            echo "::group::run $(basename "$bin") on ${{ matrix.arch }}"
+            docker run --rm \
+              --platform "linux/${{ matrix.arch }}" \
+              -e QEMU_CPU="${{ matrix.qemu_cpu }}" \
+              -v "$PWD:/w" -w /w \
+              "${{ matrix.image }}" \
+              "/w/$bin" -test.v -test.timeout=600s \
+              -test.coverprofile="/w/${bin}.cover" \
+              || fail=1
+            echo "::endgroup::"
+          done
+          exit $fail
+
+      - name: coverage gate (userspace tests)
+        run: |
+          set -euo pipefail
+          # Merge per-binary cover profiles, then compute the total.
+          covs=( _tests/*.cover )
+          if [ ${#covs[@]} -eq 0 ]; then
+            echo "no coverage profiles produced"; exit 1
+          fi
+          echo "mode: atomic" > merged.cover
+          for c in "${covs[@]}"; do
+            tail -n +2 "$c" >> merged.cover || true
+          done
+          pct=$(go tool cover -func=merged.cover | awk '/^total:/ {gsub("%","",$3); print $3}')
+          echo "total coverage (${{ matrix.arch }}): ${pct}% (min ${COVER_MIN}%)"
+          awk -v p="$pct" -v m="$COVER_MIN" \
+            'BEGIN { exit (p+0 >= m+0) ? 0 : 1 }' \
+            || { echo "coverage ${pct}% below floor ${COVER_MIN}%"; exit 1; }
