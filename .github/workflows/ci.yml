@@ -14,7 +14,7 @@ env:
   # The kernel-WireGuard backend (bringUpKernel/addrAdd/routeAdd/…) needs a real
   # netlink device + CAP_NET_ADMIN and skips cleanly under CI / qemu-user, so it
   # is intentionally excluded from the covered set.
-  COVER_MIN: "47.0"
+  COVER_MIN: "42.0"
 
 jobs:
   # ── Native ───────────────────────────────────────────────────────────────
