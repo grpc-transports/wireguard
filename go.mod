@@ -5,7 +5,7 @@ go 1.27.1
 require (
 	github.com/vishvananda/netlink v1.3.1
 	golang.org/x/crypto v0.57.0
-	golang.zx2c4.com/wireguard v0.0.0-20260522210424-ecfc5a8d5446
+	golang.zx2c4.com/wireguard v0.0.0-20261006164505-2631ce99a06f
 	golang.zx2c4.com/wireguard/wgctrl v0.0.0-20241231184526-a9ab2273dd10
 	google.golang.org/grpc v1.84.0
 )
